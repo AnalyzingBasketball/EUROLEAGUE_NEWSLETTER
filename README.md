@@ -1,2 +1,2 @@
-# EUROLEAGUE_NEWSLETTER
-Euroleague Newsletter
+# acb-newsletter-bot
+ACB newsletter bot
