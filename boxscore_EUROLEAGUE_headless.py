@@ -5,19 +5,14 @@ import time
 import os
 
 # ==============================================================================
-# 1. CONFIGURACIÓN HEADLESS (SIN INTERFAZ GRÁFICA)
+# 1. CONFIGURACIÓN HEADLESS (TODOS LOS EQUIPOS)
 # ==============================================================================
-# Pon aquí el equipo que quieres extraer. 
-# Si quieres otro, cámbialo aquí directamente.
-TEAM_NAME = "Real Madrid"
-TEAM_CODE = "MAD"
-
 SEASON_CODE = "E2025" 
 SEASON_LABEL = "2025/2026"
 MAX_GAMES = 350
-CARPETA_SALIDA = "data" # Aquí le decimos que guarde en la carpeta que creaste
+CARPETA_SALIDA = "data"
+NOMBRE_ARCHIVO = f"BoxScore_Euroleague_{SEASON_LABEL[:4]}_Cumulative.csv"
 
-# Cabeceras
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json"
@@ -52,13 +47,12 @@ def time_to_min(t_str):
     except: return 0.0
 
 # ==============================================================================
-# 3. LÓGICA DE EXTRACCIÓN Y BUCLE PRINCIPAL
+# 3. LÓGICA DE EXTRACCIÓN (Bucle Universal)
 # ==============================================================================
 def main():
-    print(f"🚀 INICIANDO SCRAPER AUTOMÁTICO EUROLIGA PARA: {TEAM_NAME}")
-    print(f"📅 Temporada: {SEASON_LABEL} (API: {SEASON_CODE})")
+    print(f"🚀 INICIANDO SCRAPER EUROLIGA: TODOS LOS EQUIPOS")
+    print(f"📅 Temporada: {SEASON_LABEL}")
     
-    # Creamos carpeta si no existe (al igual que en el de ACB)
     if not os.path.exists(CARPETA_SALIDA):
         os.makedirs(CARPETA_SALIDA)
         print(f"📁 Carpeta creada: {CARPETA_SALIDA}")
@@ -75,110 +69,91 @@ def main():
         params = {"gamecode": str(game_id), "seasoncode": SEASON_CODE}
         
         try:
-            r = requests.get(url, params=params, headers=HEADERS, timeout=3)
+            r = requests.get(url, params=params, headers=HEADERS, timeout=5)
             
             if r.status_code == 200:
                 data = r.json()
                 
                 if 'Stats' in data and len(data['Stats']) >= 2:
                     
-                    target_team = None
-                    rival_team = None
-                    location = ""
+                    # Cálculo de semana (Aprox. 9 partidos por jornada en Euroliga)
+                    jornada_estimada = ((game_id - 1) // 9) + 1
+                    week_label = f"Jornada {jornada_estimada}"
                     
                     for i, team_data in enumerate(data['Stats']):
-                        t_name = team_data.get('Team', '').upper()
-                        t_code = team_data.get('TeamCode', '')
+                        target_team = team_data
+                        rival_idx = 1 - i
+                        rival_team = data['Stats'][rival_idx]
+                        location = "Home" if i == 0 else "Away"
                         
-                        match_name = TEAM_NAME.upper() in t_name 
-                        match_code = (t_code == TEAM_CODE) and t_code is not None
-                        
-                        if match_name or match_code:
-                            target_team = team_data
-                            rival_idx = 1 - i
-                            rival_team = data['Stats'][rival_idx]
-                            location = "Home" if i == 0 else "Away"
-                            break
-                    
-                    if target_team:
-                        rival_name = rival_team.get('Team', 'UNKNOWN')
-                        rival_code = rival_team.get('TeamCode')
-                        if not rival_code: rival_code = rival_name[:3].upper()
+                        team_code = target_team.get('TeamCode') or target_team.get('Team', 'UNK')[:3].upper()
+                        rival_code = rival_team.get('TeamCode') or rival_team.get('Team', 'UNK')[:3].upper()
                         
                         pts_us = sum([p.get('Points', 0) for p in target_team.get('PlayersStats', []) if not p.get('IsTeam')])
                         pts_them = sum([p.get('Points', 0) for p in rival_team.get('PlayersStats', []) if not p.get('IsTeam')])
                         win = 1 if pts_us > pts_them else 0
                         
-                        count_p = 0
                         for p in target_team.get('PlayersStats', []):
                             if p.get('IsTeam', False): continue 
                             if p.get('IsPlaying', False) is False and p.get('Minutes') == "00:00": continue 
                             
                             clean_name = formatear_nombre_euro(p.get('Player'))
                             
-                            t2m = p.get('FieldGoalsMade2', 0)
-                            t2a = p.get('FieldGoalsAttempted2', 0)
-                            t3m = p.get('FieldGoalsMade3', 0)
-                            t3a = p.get('FieldGoalsAttempted3', 0)
-                            ftm = p.get('FreeThrowsMade', 0)
-                            fta = p.get('FreeThrowsAttempted', 0)
+                            t2m = p.get('FieldGoalsMade2', 0); t2a = p.get('FieldGoalsAttempted2', 0)
+                            t3m = p.get('FieldGoalsMade3', 0); t3a = p.get('FieldGoalsAttempted3', 0)
+                            ftm = p.get('FreeThrowsMade', 0);  fta = p.get('FreeThrowsAttempted', 0)
                             
                             row = {
-                                'Competition': 'Euroleague', 'Season': SEASON_LABEL, 'Gamecode': game_id,
-                                'Date': '', 
-                                'TEAM': TEAM_CODE, 'Rival': rival_code, 'Location': location, 'Win': win,
-                                'PLAYER': clean_name, 
-                                'ID_PLAYER': p.get('Player_ID', ''),
+                                'Season': SEASON_LABEL, 'Week': week_label, 'GameID': game_id,
+                                'Team': team_code, 'Rival': rival_code, 'Location': location, 'Win': win,
+                                'Name': clean_name, 
+                                'PlayerID': p.get('Player_ID', ''),
                                 'Dorsal': p.get('Dorsal', ''),
                                 'Starter': 1 if p.get('IsStarter') else 0,
-                                'MIN': p.get('Minutes', '00:00'),
+                                'Min': p.get('Minutes', '00:00'),
                                 'PTS': p.get('Points', 0), 
                                 'VAL': p.get('Valuation', 0), 
-                                'pm': p.get('Plusminus', 0), 
+                                '+/-': p.get('Plusminus', 0), 
                                 
-                                '2FG_M': t2m, '2FG_A': t2a,
-                                '3FG_M': t3m, '3FG_A': t3a,
-                                'FT_M': ftm,  'FT_A': fta,
+                                '2FG_M': t2m, '2FG_A': t2a, '3FG_M': t3m, '3FG_A': t3a, 'FT_M': ftm, 'FT_A': fta,
                                 
-                                'REB_O': p.get('OffensiveRebounds', 0), 
-                                'REB_D': p.get('DefensiveRebounds', 0),
-                                'REB_T': p.get('TotalRebounds', 0), 
+                                'Reb_O': p.get('OffensiveRebounds', 0), 
+                                'Reb_D': p.get('DefensiveRebounds', 0),
+                                'Reb_T': p.get('TotalRebounds', 0), 
                                 'AST': p.get('Assistances', 0),
                                 'STL': p.get('Steals', 0), 
                                 'TO': p.get('Turnovers', 0),
                                 'BLK': p.get('BlocksFavour', 0), 
-                                'BLK_R': p.get('BlocksAgainst', 0),
                                 'PF': p.get('FoulsCommited', 0), 
-                                'PF_R': p.get('FoulsReceived', 0),
-                                'Dunks': 0 
+                                'PF_R': p.get('FoulsReceived', 0)
                             }
                             all_stats.append(row)
-                            count_p += 1
                             
-                        print(f"\n✅ ID {game_id} vs {rival_code}: {count_p} jugadores")
-                        games_found += 1
+                    games_found += 1
 
-        except Exception: pass
+        except Exception as e: 
+            pass
         time.sleep(0.05)
 
     print("\n" + "-" * 60)
 
     # ==============================================================================
-    # 4. CÁLCULOS AVANZADOS Y EXPORTACIÓN
+    # 4. CÁLCULOS AVANZADOS (Ajustados para todos los equipos)
     # ==============================================================================
     if all_stats:
         df = pd.DataFrame(all_stats)
-        print("🧠 Calculando métricas avanzadas...")
+        print("🧠 Calculando métricas avanzadas de toda la liga...")
         
-        df['MIN_FL'] = df['MIN'].apply(time_to_min)
+        df['MIN_FL'] = df['Min'].apply(time_to_min)
         df['FGA'] = df['2FG_A'] + df['3FG_A']
         df['FGM'] = df['2FG_M'] + df['3FG_M']
         
-        team_stats = df.groupby('Gamecode').agg({
+        # Corrección Crítica: Agrupar por Partido y por Equipo
+        team_stats = df.groupby(['GameID', 'Team']).agg({
             'MIN_FL': 'sum', 'FGA': 'sum', 'FT_A': 'sum', 'TO': 'sum', 'FGM': 'sum'
-        }).rename(columns={'MIN_FL': 'Tm_MIN', 'FGA': 'Tm_FGA', 'FT_A': 'Tm_FTA', 'TO': 'Tm_TO', 'FGM': 'Tm_FGM'})
+        }).rename(columns={'MIN_FL': 'Tm_MIN', 'FGA': 'Tm_FGA', 'FT_A': 'Tm_FTA', 'TO': 'Tm_TO', 'FGM': 'Tm_FGM'}).reset_index()
         
-        df = df.merge(team_stats, on='Gamecode', how='left')
+        df = df.merge(team_stats, on=['GameID', 'Team'], how='left')
         
         df['eFG%'] = np.where(df['FGA']>0, (df['FGM'] + 0.5*df['3FG_M'])/df['FGA'], 0.0) * 100
         tsa = df['FGA'] + 0.44 * df['FT_A']
@@ -197,34 +172,29 @@ def main():
         df['TOV%'] = np.where(plays>0, (df['TO']/plays)*100, 0.0)
         
         df['GmSc'] = (df['PTS'] + 0.4*df['FGM'] - 0.7*df['FGA'] - 0.4*(df['FT_A']-df['FT_M']) + 
-                      0.7*df['REB_O'] + 0.3*df['REB_D'] + df['STL'] + 0.7*df['AST'] + 
+                      0.7*df['Reb_O'] + 0.3*df['Reb_D'] + df['STL'] + 0.7*df['AST'] + 
                       0.7*df['BLK'] - 0.4*df['PF'] - df['TO'])
+        
+        # Posesiones (para igualar a ACB)
+        df['Game_Poss'] = df['Tm_FGA'] + 0.44 * df['Tm_FTA'] + df['Tm_TO']
 
-        df['2FG%'] = np.where(df['2FG_A']>0, (df['2FG_M']/df['2FG_A'])*100, 0.0)
-        df['3FG%'] = np.where(df['3FG_A']>0, (df['3FG_M']/df['3FG_A'])*100, 0.0)
-        df['FT%']  = np.where(df['FT_A']>0,  (df['FT_M']/df['FT_A'])*100, 0.0)
-
-        cols_pct = ['eFG%', 'TS%', '3PAr', 'FTr', 'USG%', 'AST%', 'TOV%', 'GmSc', '2FG%', '3FG%', 'FT%']
+        cols_pct = ['eFG%', 'TS%', '3PAr', 'FTr', 'USG%', 'AST%', 'TOV%', 'GmSc']
         for c in cols_pct: df[c] = df[c].round(1)
 
-        cols = ['Competition', 'Season', 'Gamecode', 'Date', 'TEAM', 'Rival', 'Location', 'Win', 
-                'PLAYER', 'ID_PLAYER', 'Dorsal', 'Starter', 'MIN', 'PTS', 'VAL', 'pm',
-                '2FG_M', '2FG_A', '2FG%', '3FG_M', '3FG_A', '3FG%', 'FT_M', 'FT_A', 'FT%',
-                'REB_O', 'REB_D', 'REB_T', 'AST', 'STL', 'TO', 'BLK', 'BLK_R', 'PF', 'PF_R', 'Dunks',
-                'GmSc', 'USG%', 'TS%', 'eFG%', '3PAr', 'FTr', 'AST%', 'TOV%']
-                
-        df_final = df.reindex(columns=cols)
+        cols_finales = ['GameID', 'Season', 'Week', 'Team', 'Location', 'Win', 
+                        'PlayerID', 'Dorsal', 'Name', 'Min', 'Game_Poss', 'PTS', 'VAL', '+/-',
+                        'Reb_O', 'Reb_D', 'Reb_T', 'AST', 'STL', 'TO', 'BLK', 'PF', 'PF_R',
+                        'GmSc', 'TS%', 'eFG%', 'USG%', '3PAr', 'FTr', 'AST%', 'TOV%']
         
-        # --- AQUÍ ESTÁ EL CAMBIO CLAVE PARA QUE GUARDE EN LA CARPETA DATA ---
-        fname = f"Euroleague_{TEAM_CODE}_{SEASON_CODE}_Advanced_Boxscore.csv"
-        ruta_completa = os.path.join(CARPETA_SALIDA, fname)
+        df_final = df[cols_finales]
+        
+        ruta_completa = os.path.join(CARPETA_SALIDA, NOMBRE_ARCHIVO)
         df_final.to_csv(ruta_completa, index=False, encoding='utf-8-sig')
         
-        print(f"🎉 ¡HECHO! Estadísticas Euroliga guardadas en: {ruta_completa}")
-        print(f"📊 Filas: {len(df_final)} | Partidos: {games_found}")
+        print(f"🎉 ¡HECHO! Estadísticas guardadas en: {ruta_completa}")
+        print(f"📊 Filas: {len(df_final)} | Partidos procesados: {games_found}")
     else:
         print("⚠️ No se encontraron datos.")
 
-# Esto asegura que el script se ejecute automáticamente
 if __name__ == "__main__":
     main()
